@@ -7,15 +7,15 @@ use std::mem;
 
 /// 可以被当成参数传递的类型
 /// 包含裸指针和 primitive 类型
-pub trait Arg {} // TODO: ToArg ?
+pub trait ToArg {} // TODO: 应有 to_arg 方法
 
-impl<T> Arg for *const T {}
+impl<T> ToArg for *const T {}
 
-impl<T> Arg for *mut T {}
+impl<T> ToArg for *mut T {}
 
 macro_rules! impl_arg {
     ($($ty:ty), *) => {
-        $(impl Arg for $ty {})*
+        $(impl ToArg for $ty {})*
     };
 }
 
@@ -82,7 +82,7 @@ impl Func {
     }
 
     /// 压入参数
-    pub unsafe fn push<T: Arg + Any>(&mut self, arg: T) {
+    pub unsafe fn push<T: ToArg + Any>(&mut self, arg: T) {
         // 64位下前八个浮点数需要用 xmm0~xmm7 传递
         if cfg!(target_arch = "x86_64") && self.fargs.len() != 8 {
             if arg.type_id() == TypeId::of::<f32>() {
