@@ -132,7 +132,7 @@ impl Func {
         asm!(r#"
             mov  edi, ebx  // 备份参数个数
 
-            dec  ebx       // 将 ecx 个参数依次压栈
+            dec  ebx       // 将 ebx 个参数依次压栈
             .LCDECL:
             push dword ptr [eax]
             sub  eax, 4
@@ -155,6 +155,7 @@ impl Func {
 
     /// 64 位 Linux 默认使用的调用约定
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
+    #[inline(never)]
     pub unsafe fn cdecl(&mut self) {
         let mut low: usize;
         let mut high: usize;
@@ -165,41 +166,41 @@ impl Func {
         asm!(r#"
             // 前八个浮点参数传入浮点寄存器
             cmp rdx, 0
-            jz FL0
+            jz  FL0
             cmp rdx, 1
-            jz FL1
+            jz  FL1
             cmp rdx, 2
-            jz FL2
+            jz  FL2
             cmp rdx, 3
-            jz FL3
+            jz  FL3
             cmp rdx, 4
-            jz FL4
+            jz  FL4
             cmp rdx, 5
-            jz FL5
+            jz  FL5
             cmp rdx, 6
-            jz FL6
+            jz  FL6
             cmp rdx, 7
-            jz FL7
+            jz  FL7
             movsd xmm7, qword ptr [rcx]
-            sub rcx, 8
+            sub   rcx, 8
             FL7:
             movsd xmm6, qword ptr [rcx]
-            sub rcx, 8
+            sub   rcx, 8
             FL6:
             movsd xmm5, qword ptr [rcx]
-            sub rcx, 8
+            sub   rcx, 8
             FL5:
             movsd xmm4, qword ptr [rcx]
-            sub rcx, 8
+            sub   rcx, 8
             FL4:
             movsd xmm3, qword ptr [rcx]
-            sub rcx, 8
+            sub   rcx, 8
             FL3:
             movsd xmm2, qword ptr [rcx]
-            sub rcx, 8
+            sub   rcx, 8
             FL2:
             movsd xmm1, qword ptr [rcx]
-            sub rcx, 8
+            sub   rcx, 8
             FL1:
             movsd xmm0, qword ptr [rcx]
             FL0:
@@ -207,16 +208,16 @@ impl Func {
 
             // 前六个整形参数入寄存器
             cmp rbx, 6
-            jae L6      // if rbx >= 6, jmp L6
+            jae L6       // if rbx >= 6, jmp L6
             cmp rbx, 5
-            jz L5       // if rbx == 5, jmp L5
+            jz  L5       // if rbx == 5, jmp L5
             cmp rbx, 4
-            jz L4       // if rbx == 4, jmp L4
+            jz  L4       // if rbx == 4, jmp L4
             cmp rbx, 3
-            jz L3       // if rbx == 3, jmp L3
+            jz  L3       // if rbx == 3, jmp L3
             cmp rbx, 2
-            jz L2       // if rbx == 2, jmp L2
-            jmp L1      // else jmp L1
+            jz  L2       // if rbx == 2, jmp L2
+            jmp L1       // else jmp L1
             L6:
             dec rbx
             mov r9, qword ptr [rax]
@@ -245,19 +246,19 @@ impl Func {
 
             // 如果 r11 不为 0, 继续压剩下的参数
             cmp r11, 0
-            jz CALL
+            jz  CALL
 
             PUSH:
             push qword ptr [rax]
-            sub rax, 8
-            dec r11
-            jns PUSH
+            sub  rax, 8
+            dec  r11
+            jns  PUSH
 
             // 调用函数
             CALL:
             call r10
 
-            // 如果 r11 不为 0, 则需要清栈
+            // 如果 rbx 不为 0, 则需要清栈
             cmp rbx, 0
             jz END
             shl rbx, 3
@@ -267,8 +268,8 @@ impl Func {
             "#
             : "={rax}"(low) "={rdx}"(high) "={xmm0}"(double) // https://github.com/rust-lang/rust/issues/20213
             : "{rax}"(end_of_args) "{rbx}"(self.args.len()) "{r10}"(self.func) "{rcx}"(end_of_fargs) "{rdx}"(self.fargs.len())
-            : "rax" "rdx" "r10" "r11" "rdi" "rsi" "rdx" "rcx" "r8" "r9"
-            : "intel");
+            : "memory" "rdi" "rsi" "rdx" "rcx" "r8" "r9" "r11"
+            : "volatile" "intel");
         self.ret_low = low;
         self.ret_high = high;
         self.ret_float = double;
@@ -284,12 +285,12 @@ impl Func {
         // 参数从右往左入栈, 因此先取得最右边的地址
         let end_of_args = self.args.as_ptr().offset(self.args.len() as isize - 1);
         asm!(r#"
-            dec ebx       // 将 ecx 个参数依次压栈
-            LOOP_STDCALL:
+            dec  ebx       // 将 ebx 个参数依次压栈
+            .LSTDCALL:
             push dword ptr [eax]
-            sub eax, 4
-            dec ebx
-            jns LOOP_STDCALL
+            sub  eax, 4
+            dec  ebx
+            jns  LSTDCALL
 
             call ecx  // 调用函数
             "#
@@ -316,9 +317,34 @@ mod tests {
     use super::*;
     use std::ffi::CStr;
 
+
+    // test push with miri
+    #[test]
+    fn push() {
+        let mut func = Func::from_raw(0 as *const fn());
+        unsafe {
+            func.push(0u8);
+            func.push(0i8);
+            func.push(0u16);
+            func.push(0i16);
+            func.push(0u32);
+            func.push(0i32);
+            func.push(0isize);
+            func.push(0usize);
+            func.push(0i64);
+            func.push(0u64);
+            func.push(0u128);
+            func.push(0i128);
+            func.push(0.0f32);
+            func.push(0.0f64);
+            func.push(b"".as_ptr());
+        }
+    }
+
+    // TODO: 64位 release 下有 bug, 应该是浮点数相关
     #[test]
     #[cfg(target_os = "linux")]
-    fn cdecl_printf() {
+    fn cdecl_sprintf() {
         let mut buf = vec![0i8; 100];
         let mut func = if cfg!(target_arch = "x86") {
             Func::new("/usr/lib32/libc.so.6", b"sprintf\0").unwrap()
