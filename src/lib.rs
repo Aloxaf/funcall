@@ -1,11 +1,9 @@
 //! 动态调用函数 (目前仅支持小端序)
-#![feature(proc_macro_hygiene, asm)]
+#![feature(asm)]
 
 use std::any::{Any, TypeId};
 use std::ffi::OsStr;
 use std::mem;
-
-use rusty_asm::rusty_asm;
 
 /// 可以被当成参数传递的类型
 /// 包含裸指针和 primitive 类型
@@ -84,45 +82,38 @@ impl Func {
     }
 
     /// 压入参数
-    pub fn push<T: Arg + Any>(&mut self, arg: T) {
+    pub unsafe fn push<T: Arg + Any>(&mut self, arg: T) {
         // 64位下前八个浮点数需要用 xmm0~xmm7 传递
         if cfg!(target_arch = "x86_64") && self.fargs.len() != 8 {
             if arg.type_id() == TypeId::of::<f32>() {
-                unsafe {
-                    return self.fargs.push(f64::from(mem::transmute_copy::<T, f32>(&arg)));
-                }
+                return self
+                    .fargs
+                    .push(f64::from(mem::transmute_copy::<T, f32>(&arg)));
             } else if arg.type_id() == TypeId::of::<f64>() {
-                unsafe {
-                    return self.fargs.push(mem::transmute_copy::<T, f64>(&arg));
-                }
+                return self.fargs.push(mem::transmute_copy::<T, f64>(&arg));
             }
         }
 
         // 浮点数理应使用浮点专用的指令传参, 然而咱是手动压栈的, 压栈的时候已经丢失了类型信息, 只能用 push
         // 所以需要手动转成适合压栈的格式, 对于 f64 来说, 规则和 u64 一样, 但是 f32 需要先转成 f64 再压栈(即对齐
         if arg.type_id() == TypeId::of::<f32>() {
-            unsafe {
-                self.push(f64::from(mem::transmute_copy::<T, f32>(&arg)));
-            }
+            self.push(f64::from(mem::transmute_copy::<T, f32>(&arg)));
         } else if mem::size_of::<T>() <= mem::size_of::<usize>() {
             // 当参数大小小于等于机器字长时, 直接 transmute_copy + as 转换为 usize
             // 转换得到的数字需要与转换前的数字拥有相等的二进制表示(对齐后)
-            let arg = unsafe {
-                match mem::size_of::<T>() {
-                    1 => mem::transmute_copy::<T, u8>(&arg) as usize,
-                    2 => mem::transmute_copy::<T, u16>(&arg) as usize,
-                    4 => mem::transmute_copy::<T, u32>(&arg) as usize,
-                    8 => mem::transmute_copy::<T, u64>(&arg) as usize,
-                    _ => unreachable!("We don't support 128bit machine now"),
-                }
+            let arg = match mem::size_of::<T>() {
+                1 => mem::transmute_copy::<T, u8>(&arg) as usize,
+                2 => mem::transmute_copy::<T, u16>(&arg) as usize,
+                4 => mem::transmute_copy::<T, u32>(&arg) as usize,
+                8 => mem::transmute_copy::<T, u64>(&arg) as usize,
+                _ => unreachable!("We don't support 128bit machine now"),
             };
             self.args.push(arg);
         } else {
             // 当参数大小大于机器字长, 如 32 位下的 f64 时
             // 分割为一个 &[usize] 再压入
             let len = mem::size_of::<T>() / mem::size_of::<usize>();
-            let slice =
-                unsafe { std::slice::from_raw_parts(&arg as *const _ as *const usize, len) };
+            let slice = std::slice::from_raw_parts(&arg as *const _ as *const usize, len);
             self.args.extend_from_slice(slice);
         }
     }
@@ -130,6 +121,7 @@ impl Func {
     /// 以 cdecl 调用约定调用函数
     /// 即 C 语言默认使用的调用约定
     #[cfg(target_arch = "x86")]
+    #[inline(never)] // FIX "invalid operand for instruction", https://github.com/rust-lang/rust/issues/27395 这个方法没用
     pub unsafe fn cdecl(&mut self) {
         let mut low: usize;
         let mut high: usize;
@@ -154,8 +146,8 @@ impl Func {
             "#
             : "={eax}"(low) "={edx}"(high) "={st}"(double) // https://github.com/rust-lang/rust/issues/20213
             : "{eax}"(end_of_args) "{ebx}"(self.args.len()) "{ecx}"(self.func)
-            : "edi"
-            : "intel");
+            : "memory" "edi" "ecx"
+            : "volatile" "intel");
         self.ret_low = low;
         self.ret_high = high;
         self.ret_float = double;
@@ -333,13 +325,13 @@ mod tests {
         } else {
             Func::new("/usr/lib/libc.so.6", b"sprintf\0").unwrap()
         };
-        func.push(buf.as_mut_ptr());
-        func.push(b"%d %lld %.3f %.3f\0".as_ptr());
-        func.push(2233i32);
-        func.push(2147483648i64);
-        func.push(2233.0f32);
-        func.push(123.456f64);
         unsafe {
+            func.push(buf.as_mut_ptr());
+            func.push(b"%d %lld %.3f %.3f\0".as_ptr());
+            func.push(2233i32);
+            func.push(2147483648i64);
+            func.push(2233.0f32);
+            func.push(123.456f64);
             func.cdecl();
             assert_eq!(
                 CStr::from_ptr(buf.as_ptr()).to_str().unwrap(),
@@ -356,8 +348,8 @@ mod tests {
         } else {
             Func::new("/usr/lib/libc.so.6", b"atoi\0").unwrap()
         };
-        func.push(b"2233\0".as_ptr());
         unsafe {
+            func.push(b"2233\0".as_ptr());
             func.cdecl();
         }
         assert_eq!(func.ret_usize(), 2233);
@@ -371,8 +363,8 @@ mod tests {
         } else {
             Func::new("/usr/lib/libc.so.6", b"atoll\0").unwrap()
         };
-        func.push(b"2147483649\0".as_ptr());
         unsafe {
+            func.push(b"2147483649\0".as_ptr());
             func.cdecl();
         }
         assert_eq!(func.ret_usize(), 2147483649);
@@ -386,8 +378,8 @@ mod tests {
         } else {
             Func::new("/usr/lib/libc.so.6", b"atof\0").unwrap()
         };
-        func.push(b"123.456\0".as_ptr());
         unsafe {
+            func.push(b"123.456\0".as_ptr());
             func.cdecl();
         }
         assert!(func.ret_f64() - 123.456 <= std::f64::EPSILON);
