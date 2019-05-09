@@ -88,11 +88,11 @@ impl Func {
         if cfg!(target_arch = "x86_64") && self.fargs.len() != 8 {
             if arg.type_id() == TypeId::of::<f32>() {
                 unsafe {
-                    return self.fargs.push(mem::transmute_copy::<T, f32>(&arg) as f64);
+                    return self.fargs.push(f64::from(mem::transmute_copy::<T, f32>(&arg)));
                 }
             } else if arg.type_id() == TypeId::of::<f64>() {
                 unsafe {
-                    return self.fargs.push(mem::transmute_copy::<T, f64>(&arg) as f64);
+                    return self.fargs.push(mem::transmute_copy::<T, f64>(&arg));
                 }
             }
         }
@@ -101,7 +101,7 @@ impl Func {
         // 所以需要手动转成适合压栈的格式, 对于 f64 来说, 规则和 u64 一样, 但是 f32 需要先转成 f64 再压栈(即对齐
         if arg.type_id() == TypeId::of::<f32>() {
             unsafe {
-                self.push(mem::transmute_copy::<T, f32>(&arg) as f64);
+                self.push(f64::from(mem::transmute_copy::<T, f32>(&arg)));
             }
         } else if mem::size_of::<T>() <= mem::size_of::<usize>() {
             // 当参数大小小于等于机器字长时, 直接 transmute_copy + as 转换为 usize
