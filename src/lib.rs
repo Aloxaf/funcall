@@ -1,14 +1,15 @@
 //! 动态调用函数 (目前仅支持小端序)
-
-#![feature(asm)]
+#![feature(proc_macro_hygiene, asm)]
 
 use std::any::{Any, TypeId};
 use std::ffi::OsStr;
 use std::mem;
 
+use rusty_asm::rusty_asm;
+
 /// 可以被当成参数传递的类型
 /// 包含裸指针和 primitive 类型
-pub trait Arg {}
+pub trait Arg {} // TODO: ToArg ?
 
 impl<T> Arg for *const T {}
 
@@ -135,24 +136,25 @@ impl Func {
         let mut double: f64;
         // 参数从右往左入栈, 因此先取得最右边的地址
         let end_of_args = self.args.as_ptr().offset(self.args.len() as isize - 1);
+        // TODO: 此处备份到寄存器可能会失效?
         asm!(r#"
-            mov edi, ebx  // 备份参数个数
+            mov  edi, ebx  // 备份参数个数
 
-            dec ebx       // 将 ecx 个参数依次压栈
-            LOOP_CDECL:
+            dec  ebx       // 将 ecx 个参数依次压栈
+            .LCDECL:
             push dword ptr [eax]
-            sub eax, 4
-            dec ebx
-            jns LOOP_CDECL
+            sub  eax, 4
+            dec  ebx
+            jns  .LCDECL
 
-            call ecx  // 调用函数
+            call ecx       // 调用函数
 
-            shl edi, 2    // 参数个数x4, 得到恢复堆栈指针所需的大小
-            add esp, edi  // 恢复堆栈指针
+            shl  edi, 2    // 参数个数x4, 得到恢复堆栈指针所需的大小
+            add  esp, edi  // 恢复堆栈指针
             "#
             : "={eax}"(low) "={edx}"(high) "={st}"(double) // https://github.com/rust-lang/rust/issues/20213
             : "{eax}"(end_of_args) "{ebx}"(self.args.len()) "{ecx}"(self.func)
-            : "eax" "ebx" "ecx" "edx"
+            : "edi"
             : "intel");
         self.ret_low = low;
         self.ret_high = high;
