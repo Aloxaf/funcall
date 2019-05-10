@@ -121,7 +121,6 @@ impl Func {
     /// 以 cdecl 调用约定调用函数
     /// 即 C 语言默认使用的调用约定
     #[cfg(target_arch = "x86")]
-    #[inline(never)] // FIX "invalid operand for instruction", https://github.com/rust-lang/rust/issues/27395 这个方法没用
     pub unsafe fn cdecl(&mut self) {
         let mut low: usize;
         let mut high: usize;
@@ -129,15 +128,16 @@ impl Func {
         // 参数从右往左入栈, 因此先取得最右边的地址
         let end_of_args = self.args.as_ptr().offset(self.args.len() as isize - 1);
         // TODO: 此处备份到寄存器可能会失效?
+        // https://github.com/rust-lang/rust/issues/27395
         asm!(r#"
             mov  edi, ebx  // 备份参数个数
 
             dec  ebx       // 将 ebx 个参数依次压栈
-            .LCDECL:
+            .L${:uid}:
             push dword ptr [eax]
             sub  eax, 4
             dec  ebx
-            jns  .LCDECL
+            jns  .L${:uid}
 
             call ecx       // 调用函数
 
@@ -155,7 +155,6 @@ impl Func {
 
     /// 64 位 Linux 默认使用的调用约定
     #[cfg(all(target_arch = "x86_64", target_os = "linux"))]
-    #[inline(never)]
     pub unsafe fn cdecl(&mut self) {
         let mut low: usize;
         let mut high: usize;
@@ -166,79 +165,79 @@ impl Func {
         asm!(r#"
             // 前八个浮点参数传入浮点寄存器
             cmp rdx, 0
-            jz  FL0
+            jz  .LARG0${:uid}
             cmp rdx, 1
-            jz  FL1
+            jz  .LARG1${:uid}
             cmp rdx, 2
-            jz  FL2
+            jz  .LARG2${:uid}
             cmp rdx, 3
-            jz  FL3
+            jz  .LARG3${:uid}
             cmp rdx, 4
-            jz  FL4
+            jz  .LARG4${:uid}
             cmp rdx, 5
-            jz  FL5
+            jz  .LARG5${:uid}
             cmp rdx, 6
-            jz  FL6
+            jz  .LARG6${:uid}
             cmp rdx, 7
-            jz  FL7
+            jz  .LARG7${:uid}
             movsd xmm7, qword ptr [rcx]
             sub   rcx, 8
-            FL7:
+            .LARG7${:uid}:
             movsd xmm6, qword ptr [rcx]
             sub   rcx, 8
-            FL6:
+            .LARG6${:uid}:
             movsd xmm5, qword ptr [rcx]
             sub   rcx, 8
-            FL5:
+            .LARG5${:uid}:
             movsd xmm4, qword ptr [rcx]
             sub   rcx, 8
-            FL4:
+            .LARG4${:uid}:
             movsd xmm3, qword ptr [rcx]
             sub   rcx, 8
-            FL3:
+            .LARG3${:uid}:
             movsd xmm2, qword ptr [rcx]
             sub   rcx, 8
-            FL2:
+            .LARG2${:uid}:
             movsd xmm1, qword ptr [rcx]
             sub   rcx, 8
-            FL1:
+            .LARG1${:uid}:
             movsd xmm0, qword ptr [rcx]
-            FL0:
+            .LARG0${:uid}:
 
 
             // 前六个整形参数入寄存器
             cmp rbx, 6
-            jae L6       // if rbx >= 6, jmp L6
+            jae .L6${:uid}       // if rbx >= 6, jmp L6
             cmp rbx, 5
-            jz  L5       // if rbx == 5, jmp L5
+            jz  .L5${:uid}       // if rbx == 5, jmp L5
             cmp rbx, 4
-            jz  L4       // if rbx == 4, jmp L4
+            jz  .L4${:uid}       // if rbx == 4, jmp L4
             cmp rbx, 3
-            jz  L3       // if rbx == 3, jmp L3
+            jz  .L3${:uid}       // if rbx == 3, jmp L3
             cmp rbx, 2
-            jz  L2       // if rbx == 2, jmp L2
-            jmp L1       // else jmp L1
-            L6:
+            jz  .L2${:uid}       // if rbx == 2, jmp L2
+            jmp .L1${:uid}       // else jmp L1
+            .L6${:uid}:
             dec rbx
             mov r9, qword ptr [rax]
             sub rax, 8
-            L5:
+            .L5${:uid}:
             dec rbx
             mov r8, qword ptr [rax]
             sub rax, 8
-            L4:
+            .L4${:uid}:
             dec rbx
             mov rcx, qword ptr [rax]
             sub rax, 8
-            L3:
+            .L3${:uid}:
             dec rbx
             mov rdx, qword ptr [rax]
             sub rax, 8
-            L2:
+            .L2${:uid}:
             dec rbx
             mov rsi, qword ptr [rax]
             sub rax, 8
-            L1:
+            .L1${:uid}:
             dec rbx
             mov rdi, qword ptr [rax]
 
@@ -246,25 +245,25 @@ impl Func {
 
             // 如果 r11 不为 0, 继续压剩下的参数
             cmp r11, 0
-            jz  CALL
+            jz  .LCALL${:uid}
 
-            PUSH:
+            .LPUSH${:uid}:
             push qword ptr [rax]
             sub  rax, 8
             dec  r11
-            jns  PUSH
+            jns  .LPUSH${:uid}
 
             // 调用函数
-            CALL:
+            .LCALL${:uid}:
             call r10
 
             // 如果 rbx 不为 0, 则需要清栈
             cmp rbx, 0
-            jz END
+            jz .LEND${:uid}
             shl rbx, 3
             add rsp, rbx
 
-            END:
+            .LEND${:uid}:
             "#
             : "={rax}"(low) "={rdx}"(high) "={xmm0}"(double) // https://github.com/rust-lang/rust/issues/20213
             : "{rax}"(end_of_args) "{rbx}"(self.args.len()) "{r10}"(self.func) "{rcx}"(end_of_fargs) "{rdx}"(self.fargs.len())
@@ -286,11 +285,11 @@ impl Func {
         let end_of_args = self.args.as_ptr().offset(self.args.len() as isize - 1);
         asm!(r#"
             dec  ebx       // 将 ebx 个参数依次压栈
-            .LSTDCALL:
+            .L${:uid}:
             push dword ptr [eax]
             sub  eax, 4
             dec  ebx
-            jns  LSTDCALL
+            jns  .L${:uid}
 
             call ecx  // 调用函数
             "#
