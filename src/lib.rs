@@ -269,7 +269,7 @@ impl Func {
             : "={rax}"(low) "={rdx}"(high) "={xmm0}"(double) // https://github.com/rust-lang/rust/issues/20213
             : "{rax}"(end_of_args) "{rbx}"(self.args.len()) "{r10}"(self.func) "{rcx}"(end_of_fargs) "{rdx}"(self.fargs.len())
             : "memory" "rdi" "rsi" "rdx" "rcx" "r8" "r9" "r11"
-            : "volatile" "intel");
+            : "volatile" "alignstack" "intel");
         self.ret_low = low;
         self.ret_high = high;
         self.ret_float = double;
@@ -296,8 +296,8 @@ impl Func {
             "#
             : "={eax}"(low) "={edx}"(high) "={st}"(double) // https://github.com/rust-lang/rust/issues/20213
             : "{eax}"(end_of_args) "{ebx}"(self.args.len()) "{ecx}"(self.func)
-            : "eax" "ebx" "ecx" "edx"
-            : "intel");
+            : "memory" "eax" "ebx" "ecx" "edx"
+            : "volatile" "intel");
         self.ret_low = low;
         self.ret_high = high;
         self.ret_float = double;
@@ -316,7 +316,6 @@ impl Func {
 mod tests {
     use super::*;
     use std::ffi::CStr;
-
 
     // test push with miri
     #[test]
@@ -341,7 +340,6 @@ mod tests {
         }
     }
 
-    // TODO: 64位 release 下有 bug, 应该是浮点数相关
     #[test]
     #[cfg(target_os = "linux")]
     fn cdecl_sprintf() {
