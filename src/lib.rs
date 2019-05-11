@@ -84,39 +84,41 @@ impl Func {
     }
 
     /// 压入参数
-    pub unsafe fn push<T: ToArg + Any>(&mut self, arg: T) {
-        // 64位下前八个浮点数需要用 xmm0~xmm7 传递
-        if cfg!(target_arch = "x86_64") && self.fargs.len() != 8 {
-            if arg.type_id() == TypeId::of::<f32>() {
-                return self
-                    .fargs
-                    .push(f64::from(mem::transmute_copy::<T, f32>(&arg)));
-            } else if arg.type_id() == TypeId::of::<f64>() {
-                return self.fargs.push(mem::transmute_copy::<T, f64>(&arg));
+    pub fn push<T: ToArg + Any>(&mut self, arg: T) {
+        unsafe {
+            // 64位下前八个浮点数需要用 xmm0~xmm7 传递
+            if cfg!(target_arch = "x86_64") && self.fargs.len() != 8 {
+                if arg.type_id() == TypeId::of::<f32>() {
+                    return self
+                        .fargs
+                        .push(f64::from(mem::transmute_copy::<T, f32>(&arg)));
+                } else if arg.type_id() == TypeId::of::<f64>() {
+                    return self.fargs.push(mem::transmute_copy::<T, f64>(&arg));
+                }
             }
-        }
 
-        // 浮点数理应使用浮点专用的指令传参, 然而咱是手动压栈的, 压栈的时候已经丢失了类型信息, 只能用 push
-        // 所以需要手动转成适合压栈的格式, 对于 f64 来说, 规则和 u64 一样, 但是 f32 需要先转成 f64 再压栈(即对齐
-        if arg.type_id() == TypeId::of::<f32>() {
-            self.push(f64::from(mem::transmute_copy::<T, f32>(&arg)));
-        } else if mem::size_of::<T>() <= mem::size_of::<usize>() {
-            // 当参数大小小于等于机器字长时, 直接 transmute_copy + as 转换为 usize
-            // 转换得到的数字需要与转换前的数字拥有相等的二进制表示(对齐后)
-            let arg = match mem::size_of::<T>() {
-                1 => mem::transmute_copy::<T, u8>(&arg) as usize,
-                2 => mem::transmute_copy::<T, u16>(&arg) as usize,
-                4 => mem::transmute_copy::<T, u32>(&arg) as usize,
-                8 => mem::transmute_copy::<T, u64>(&arg) as usize,
-                _ => unreachable!("We don't support 128bit machine now"),
-            };
-            self.args.push(arg);
-        } else {
-            // 当参数大小大于机器字长, 如 32 位下的 f64 时
-            // 分割为一个 &[usize] 再压入
-            let len = mem::size_of::<T>() / mem::size_of::<usize>();
-            let slice = std::slice::from_raw_parts(&arg as *const _ as *const usize, len);
-            self.args.extend_from_slice(slice);
+            // 浮点数理应使用浮点专用的指令传参, 然而咱是手动压栈的, 压栈的时候已经丢失了类型信息, 只能用 push
+            // 所以需要手动转成适合压栈的格式, 对于 f64 来说, 规则和 u64 一样, 但是 f32 需要先转成 f64 再压栈(即对齐
+            if arg.type_id() == TypeId::of::<f32>() {
+                self.push(f64::from(mem::transmute_copy::<T, f32>(&arg)));
+            } else if mem::size_of::<T>() <= mem::size_of::<usize>() {
+                // 当参数大小小于等于机器字长时, 直接 transmute_copy + as 转换为 usize
+                // 转换得到的数字需要与转换前的数字拥有相等的二进制表示(对齐后)
+                let arg = match mem::size_of::<T>() {
+                    1 => mem::transmute_copy::<T, u8>(&arg) as usize,
+                    2 => mem::transmute_copy::<T, u16>(&arg) as usize,
+                    4 => mem::transmute_copy::<T, u32>(&arg) as usize,
+                    8 => mem::transmute_copy::<T, u64>(&arg) as usize,
+                    _ => unreachable!("We don't support 128bit machine now"),
+                };
+                self.args.push(arg);
+            } else {
+                // 当参数大小大于机器字长, 如 32 位下的 f64 时
+                // 分割为一个 &[usize] 再压入
+                let len = mem::size_of::<T>() / mem::size_of::<usize>();
+                let slice = std::slice::from_raw_parts(&arg as *const _ as *const usize, len);
+                self.args.extend_from_slice(slice);
+            }
         }
     }
 
@@ -131,7 +133,7 @@ impl Func {
             // 参数从右往左入栈, 因此先取得最右边的地址
             let args: in("r") = self.args.as_ptr().offset(self.args.len() as isize - 1);
             let len : in("m") = self.args.len();
-            let func: in("r") = self.func;
+            let func: in("m") = self.func;
 
             clobber("memory");
             clobber("esp");
@@ -171,7 +173,7 @@ impl Func {
             let len  : in("r") = self.args.len();
             let fargs: in("r") = self.fargs.as_ptr().offset(self.fargs.len() as isize - 1);
             let flen : in("r") = self.fargs.len();
-            let func : in("r") = self.func;
+            let func : in("m") = self.func;
 
             clobber("memory");
             clobber("rsp");
@@ -299,19 +301,24 @@ impl Func {
             let mut high : usize: out("{edx}");
             let mut float: f64  : out("{st}");
             // 参数从右往左入栈, 因此先取得最右边的地址
-            let args: in("{eax}") = self.args.as_ptr().offset(self.args.len() as isize - 1);
-            let len : in("{ebx}") = self.args.len();
-            let func: in("{ecx}") = self.func;
+            let args: in("r") = self.args.as_ptr().offset(self.args.len() as isize - 1);
+            let len : in("m") = self.args.len();
+            let func: in("m") = self.func;
+
+            clobber("memory");
+            clobber("esp");
+            clobber("ebx");
 
             asm("intel") {r"
-                dec  ebx  // 将 ebx 个参数从右往左压栈
-            .L${:uid}:
-                push dword ptr [eax]
-                sub  eax, 4
+                mov  ebx, $len  // 将 $4 个参数依次压栈
+                dec  ebx
+            .L${:uid}:          // https://github.com/rust-lang/rust/issues/27395
+                push dword ptr [$args]
+                sub  $args, 4
                 dec  ebx
                 jns  .L${:uid}
 
-                call ecx
+                call $func      // 调用函数
             "}
 
             self.ret_low   = low;
@@ -334,7 +341,16 @@ mod tests {
     use super::*;
     use std::ffi::CStr;
 
-    pub extern fn more_than_6_args(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32) -> i32 {
+    pub extern "C" fn more_than_6_args(
+        a: i32,
+        b: i32,
+        c: i32,
+        d: i32,
+        e: i32,
+        f: i32,
+        g: i32,
+        h: i32,
+    ) -> i32 {
         a + b + c + d + e + f + g + h
     }
 
@@ -342,32 +358,30 @@ mod tests {
     #[test]
     fn push() {
         let mut func = Func::from_raw(0 as *const fn());
-        unsafe {
-            func.push(0u8);
-            func.push(0i8);
-            func.push(0u16);
-            func.push(0i16);
-            func.push(0u32);
-            func.push(0i32);
-            func.push(0isize);
-            func.push(0usize);
-            func.push(0i64);
-            func.push(0u64);
-            func.push(0u128);
-            func.push(0i128);
-            func.push(0.0f32);
-            func.push(0.0f64);
-            func.push(b"".as_ptr());
-        }
+        func.push(0u8);
+        func.push(0i8);
+        func.push(0u16);
+        func.push(0i16);
+        func.push(0u32);
+        func.push(0i32);
+        func.push(0isize);
+        func.push(0usize);
+        func.push(0i64);
+        func.push(0u64);
+        func.push(0u128);
+        func.push(0i128);
+        func.push(0.0f32);
+        func.push(0.0f64);
+        func.push(b"".as_ptr());
     }
 
     #[test]
     fn cdecl_more_than_6_args() {
         let mut func = Func::from_raw(more_than_6_args as *const fn());
+        for i in 1..=8 {
+            func.push(i);
+        }
         unsafe {
-            for i in 1..=8 {
-                func.push(i);
-            }
             func.cdecl();
             assert_eq!(func.ret_usize(), (1..=8).sum());
         }
@@ -382,15 +396,15 @@ mod tests {
         } else {
             Func::new("/usr/lib/libc.so.6", b"sprintf\0").unwrap()
         };
+        func.push(buf.as_mut_ptr());
+        func.push(b"%d %d %d %d %d %d\0".as_ptr());
+        func.push(3);
+        func.push(4);
+        func.push(5);
+        func.push(6);
+        func.push(7);
+        func.push(8);
         unsafe {
-            func.push(buf.as_mut_ptr());
-            func.push(b"%d %d %d %d %d %d\0".as_ptr());
-            func.push(3);
-            func.push(4);
-            func.push(5);
-            func.push(6);
-            func.push(7);
-            func.push(8);
             func.cdecl();
             assert_eq!(
                 CStr::from_ptr(buf.as_ptr()).to_str().unwrap(),
@@ -407,8 +421,8 @@ mod tests {
         } else {
             Func::new("/usr/lib/libc.so.6", b"atoi\0").unwrap()
         };
+        func.push(b"2233\0".as_ptr());
         unsafe {
-            func.push(b"2233\0".as_ptr());
             func.cdecl();
         }
         assert_eq!(func.ret_usize(), 2233);
@@ -422,8 +436,8 @@ mod tests {
         } else {
             Func::new("/usr/lib/libc.so.6", b"atoll\0").unwrap()
         };
+        func.push(b"2147483649\0".as_ptr());
         unsafe {
-            func.push(b"2147483649\0".as_ptr());
             func.cdecl();
         }
         assert_eq!(func.ret_usize(), 2147483649);
@@ -437,8 +451,8 @@ mod tests {
         } else {
             Func::new("/usr/lib/libc.so.6", b"atof\0").unwrap()
         };
+        func.push(b"123.456\0".as_ptr());
         unsafe {
-            func.push(b"123.456\0".as_ptr());
             func.cdecl();
         }
         assert!(func.ret_f64() - 123.456 <= std::f64::EPSILON);
