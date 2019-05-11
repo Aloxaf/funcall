@@ -127,26 +127,25 @@ impl Func {
         let mut double: f64;
         // 参数从右往左入栈, 因此先取得最右边的地址
         let end_of_args = self.args.as_ptr().offset(self.args.len() as isize - 1);
-        // TODO: 此处备份到寄存器可能会失效?
         // https://github.com/rust-lang/rust/issues/27395
         asm!(r#"
-            mov  edi, ebx  // 备份参数个数
-
-            dec  ebx       // 将 ebx 个参数依次压栈
-            .L${:uid}:
+            mov  ebx, $4  // 将 $4 个参数依次压栈
+            dec  ebx
+        .L${:uid}:
             push dword ptr [eax]
             sub  eax, 4
             dec  ebx
             jns  .L${:uid}
 
-            call ecx       // 调用函数
+            call $5        // 调用函数
 
-            shl  edi, 2    // 参数个数x4, 得到恢复堆栈指针所需的大小
-            add  esp, edi  // 恢复堆栈指针
+            mov  ebx, $4
+            shl  ebx, 2    // 参数个数x4, 得到恢复堆栈指针所需的大小
+            add  esp, ebx  // 恢复堆栈指针
             "#
             : "={eax}"(low) "={edx}"(high) "={st}"(double) // https://github.com/rust-lang/rust/issues/20213
-            : "{eax}"(end_of_args) "{ebx}"(self.args.len()) "{ecx}"(self.func)
-            : "memory" "edi" "ecx"
+            : "{eax}"(end_of_args) "m"(self.args.len()) "m"(self.func)
+            : "memory" "esp" "ebx"
             : "volatile" "intel");
         self.ret_low = low;
         self.ret_high = high;
@@ -163,111 +162,105 @@ impl Func {
         let end_of_args = self.args.as_ptr().offset(self.args.len() as isize - 1);
         let end_of_fargs = self.fargs.as_ptr().offset(self.fargs.len() as isize - 1);
         asm!(r#"
-            // 前八个浮点参数传入浮点寄存器
-            cmp rdx, 0
-            jz  .LARG0${:uid}
-            cmp rdx, 1
-            jz  .LARG1${:uid}
-            cmp rdx, 2
-            jz  .LARG2${:uid}
-            cmp rdx, 3
-            jz  .LARG3${:uid}
-            cmp rdx, 4
-            jz  .LARG4${:uid}
-            cmp rdx, 5
-            jz  .LARG5${:uid}
-            cmp rdx, 6
-            jz  .LARG6${:uid}
-            cmp rdx, 7
-            jz  .LARG7${:uid}
+            // 需要送入寄存器的浮点参数个数一定不大于 8, 因此直接跳转即可
+            lea    rdi, [rip + .LFLABELS${:uid}]
+            movsxd rsi, dword ptr [rdi + rdx * 4]
+            add    rsi, rdi
+            jmp    rsi
+
+        .LFLABELS${:uid}:
+            .long .LARG0${:uid}-.LFLABELS${:uid}
+            .long .LARG1${:uid}-.LFLABELS${:uid}
+            .long .LARG2${:uid}-.LFLABELS${:uid}
+            .long .LARG3${:uid}-.LFLABELS${:uid}
+            .long .LARG4${:uid}-.LFLABELS${:uid}
+            .long .LARG5${:uid}-.LFLABELS${:uid}
+            .long .LARG6${:uid}-.LFLABELS${:uid}
+            .long .LARG7${:uid}-.LFLABELS${:uid}
+            .long .LARG8${:uid}-.LFLABELS${:uid}
+
+        .LARG8${:uid}:
             movsd xmm7, qword ptr [rcx]
             sub   rcx, 8
-            .LARG7${:uid}:
+        .LARG7${:uid}:
             movsd xmm6, qword ptr [rcx]
             sub   rcx, 8
-            .LARG6${:uid}:
+        .LARG6${:uid}:
             movsd xmm5, qword ptr [rcx]
             sub   rcx, 8
-            .LARG5${:uid}:
+        .LARG5${:uid}:
             movsd xmm4, qword ptr [rcx]
             sub   rcx, 8
-            .LARG4${:uid}:
+        .LARG4${:uid}:
             movsd xmm3, qword ptr [rcx]
             sub   rcx, 8
-            .LARG3${:uid}:
+        .LARG3${:uid}:
             movsd xmm2, qword ptr [rcx]
             sub   rcx, 8
-            .LARG2${:uid}:
+        .LARG2${:uid}:
             movsd xmm1, qword ptr [rcx]
             sub   rcx, 8
-            .LARG1${:uid}:
+        .LARG1${:uid}:
             movsd xmm0, qword ptr [rcx]
-            .LARG0${:uid}:
+        .LARG0${:uid}:
 
+            xor    r12, r12    // r12 记录压栈参数数目
+        .LPUSH${:uid}:         // 将参数压栈, 直到参数个数小于等于 6
+            cmp    rbx, 6
+            jbe    .LPUSH_F6${:uid}
+            push   qword ptr [rax]
+            sub    rax, 8
+            inc    r12
+            dec    rbx
+            jmp    .LPUSH${:uid}
 
-            // 前六个整形参数入寄存器
-            cmp rbx, 6
-            jae .L6${:uid}       // if rbx >= 6, jmp L6
-            cmp rbx, 5
-            jz  .L5${:uid}       // if rbx == 5, jmp L5
-            cmp rbx, 4
-            jz  .L4${:uid}       // if rbx == 4, jmp L4
-            cmp rbx, 3
-            jz  .L3${:uid}       // if rbx == 3, jmp L3
-            cmp rbx, 2
-            jz  .L2${:uid}       // if rbx == 2, jmp L2
-            jmp .L1${:uid}       // else jmp L1
-            .L6${:uid}:
-            dec rbx
-            mov r9, qword ptr [rax]
-            sub rax, 8
-            .L5${:uid}:
-            dec rbx
-            mov r8, qword ptr [rax]
-            sub rax, 8
-            .L4${:uid}:
-            dec rbx
-            mov rcx, qword ptr [rax]
-            sub rax, 8
-            .L3${:uid}:
-            dec rbx
-            mov rdx, qword ptr [rax]
-            sub rax, 8
-            .L2${:uid}:
-            dec rbx
-            mov rsi, qword ptr [rax]
-            sub rax, 8
-            .L1${:uid}:
-            dec rbx
-            mov rdi, qword ptr [rax]
+        .LPUSH_F6${:uid}:    // 将前六个参数送入寄存器
+            lea    rdi, [rip + .LABELS${:uid}]
+            movsxd rsi, dword ptr [rdi + rbx * 4]
+            add    rsi, rdi
+            jmp    rsi
 
-            mov r11, rbx  // 备份此时的 rbx, 以供清栈使用
+        .LABELS${:uid}:
+            .long .LCALL${:uid}-.LABELS${:uid}
+            .long .L1${:uid}-.LABELS${:uid}
+            .long .L2${:uid}-.LABELS${:uid}
+            .long .L3${:uid}-.LABELS${:uid}
+            .long .L4${:uid}-.LABELS${:uid}
+            .long .L5${:uid}-.LABELS${:uid}
+            .long .L6${:uid}-.LABELS${:uid}
 
-            // 如果 r11 不为 0, 继续压剩下的参数
-            cmp r11, 0
-            jz  .LCALL${:uid}
-
-            .LPUSH${:uid}:
-            push qword ptr [rax]
+        .L6${:uid}:
+            mov  r9, qword ptr [rax]
             sub  rax, 8
-            dec  r11
-            jns  .LPUSH${:uid}
+        .L5${:uid}:
+            mov  r8, qword ptr [rax]
+            sub  rax, 8
+        .L4${:uid}:
+            mov  rcx, qword ptr [rax]
+            sub  rax, 8
+        .L3${:uid}:
+            mov  rdx, qword ptr [rax]
+            sub  rax, 8
+        .L2${:uid}:
+            mov  rsi, qword ptr [rax]
+            sub  rax, 8
+        .L1${:uid}:
+            mov  rdi, qword ptr [rax]
 
-            // 调用函数
-            .LCALL${:uid}:
+        .LCALL${:uid}:
             call r10
 
-            // 如果 rbx 不为 0, 则需要清栈
-            cmp rbx, 0
-            jz .LEND${:uid}
-            shl rbx, 3
-            add rsp, rbx
+            // 如果 r12 不为 0, 则需要清栈
+            cmp  r12, 0
+            jz   .LEND${:uid}
+            shl  r12, 3
+            add  rsp, r12
 
-            .LEND${:uid}:
+        .LEND${:uid}:
             "#
             : "={rax}"(low) "={rdx}"(high) "={xmm0}"(double) // https://github.com/rust-lang/rust/issues/20213
             : "{rax}"(end_of_args) "{rbx}"(self.args.len()) "{r10}"(self.func) "{rcx}"(end_of_fargs) "{rdx}"(self.fargs.len())
-            : "memory" "rdi" "rsi" "rdx" "rcx" "r8" "r9" "r11"
+            : "memory" "rsp" "rdi" "rsi" "rdx" "rcx" "r8" "r9" "r11" "r12"
             : "volatile" "alignstack" "intel");
         self.ret_low = low;
         self.ret_high = high;
@@ -284,8 +277,8 @@ impl Func {
         // 参数从右往左入栈, 因此先取得最右边的地址
         let end_of_args = self.args.as_ptr().offset(self.args.len() as isize - 1);
         asm!(r#"
-            dec  ebx       // 将 ebx 个参数依次压栈
-            .L${:uid}:
+            dec  ebx  // 将 ebx 个参数依次压栈
+        .L${:uid}:
             push dword ptr [eax]
             sub  eax, 4
             dec  ebx
@@ -295,7 +288,7 @@ impl Func {
             "#
             : "={eax}"(low) "={edx}"(high) "={st}"(double) // https://github.com/rust-lang/rust/issues/20213
             : "{eax}"(end_of_args) "{ebx}"(self.args.len()) "{ecx}"(self.func)
-            : "memory" "eax" "ebx" "ecx" "edx"
+            : "memory" "esp"
             : "volatile" "intel");
         self.ret_low = low;
         self.ret_high = high;
@@ -315,6 +308,10 @@ impl Func {
 mod tests {
     use super::*;
     use std::ffi::CStr;
+
+    pub extern fn more_than_6_args(a: i32, b: i32, c: i32, d: i32, e: i32, f: i32, g: i32, h: i32) -> i32 {
+        a + b + c + d + e + f + g + h
+    }
 
     // test push with miri
     #[test]
@@ -340,6 +337,18 @@ mod tests {
     }
 
     #[test]
+    fn cdecl_more_than_6_args() {
+        let mut func = Func::from_raw(more_than_6_args as *const fn());
+        unsafe {
+            for i in 1..=8 {
+                func.push(i);
+            }
+            func.cdecl();
+            assert_eq!(func.ret_usize(), (1..=8).sum());
+        }
+    }
+
+    #[test]
     #[cfg(target_os = "linux")]
     fn cdecl_sprintf() {
         let mut buf = vec![0i8; 100];
@@ -350,15 +359,17 @@ mod tests {
         };
         unsafe {
             func.push(buf.as_mut_ptr());
-            func.push(b"%d %lld %.3f %.3f\0".as_ptr());
-            func.push(2233i32);
-            func.push(2147483648i64);
-            func.push(2233.0f32);
-            func.push(123.456f64);
+            func.push(b"%d %d %d %d %d %d\0".as_ptr());
+            func.push(3);
+            func.push(4);
+            func.push(5);
+            func.push(6);
+            func.push(7);
+            func.push(8);
             func.cdecl();
             assert_eq!(
                 CStr::from_ptr(buf.as_ptr()).to_str().unwrap(),
-                "2233 2147483648 2233.000 123.456"
+                "3 4 5 6 7 8"
             );
         }
     }
