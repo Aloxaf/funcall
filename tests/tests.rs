@@ -1,4 +1,4 @@
-use apicall::Func;
+use funcall::Func;
 use std::ffi::CStr;
 
 mod cdecl_func;

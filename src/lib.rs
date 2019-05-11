@@ -28,7 +28,7 @@ type Result<T> = std::io::Result<T>;
 /// # Example
 ///
 /// ```ignore
-/// use apicall::Func;
+/// use funcall::Func;
 ///
 /// let mut func = Func::new("/usr/lib32/libc.so.6", b"printf\0").unwrap();
 /// func.push(b"%d".as_ptr());
@@ -131,7 +131,7 @@ impl Func {
             let mut high : usize: out("{edx}");
             let mut float: f64  : out("{st}");
             // 参数从右往左入栈, 因此先取得最右边的地址
-            let args: in("r") = self.args.as_ptr().offset(self.args.len() as isize - 1);
+            let args: in("r") = self.args.as_ptr().wrapping_offset(self.args.len() as isize - 1);
             let len : in("m") = self.args.len();
             let func: in("m") = self.func;
 
@@ -169,9 +169,9 @@ impl Func {
             let mut high : usize: out("{rdx}");
             let mut float: f64  : out("{xmm0}"); // https://github.com/rust-lang/rust/issues/20213
 
-            let args : in("r") = self.args.as_ptr().offset(self.args.len() as isize - 1);
+            let args : in("r") = self.args.as_ptr().wrapping_offset(self.args.len() as isize - 1);
             let len  : in("r") = self.args.len();
-            let fargs: in("r") = self.fargs.as_ptr().offset(self.fargs.len() as isize - 1);
+            let fargs: in("r") = self.fargs.as_ptr().wrapping_offset(self.fargs.len() as isize - 1);
             let flen : in("r") = self.fargs.len();
             let func : in("m") = self.func;
 
@@ -301,7 +301,7 @@ impl Func {
             let mut high : usize: out("{edx}");
             let mut float: f64  : out("{st}");
             // 参数从右往左入栈, 因此先取得最右边的地址
-            let args: in("r") = self.args.as_ptr().offset(self.args.len() as isize - 1);
+            let args: in("r") = self.args.as_ptr().wrapping_offset(self.args.len() as isize - 1);
             let len : in("m") = self.args.len();
             let func: in("m") = self.func;
 
