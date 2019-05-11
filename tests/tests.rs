@@ -56,7 +56,7 @@ mod cdecl {
         func.push(6);
         func.push(7);
         func.push(8);
-        func.push(1234.5678);
+        func.push(1234.5678); // FIXME: 偶尔会出现 Nan
         unsafe {
             func.cdecl();
             assert_eq!(
