@@ -326,135 +326,70 @@ impl Func {
             self.ret_float = float;
         }
     }
-
-    pub fn ret_f64(&self) -> f64 {
-        self.ret_float
-    }
-
-    pub fn ret_usize(&self) -> usize {
-        self.ret_low
-    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::ffi::CStr;
-
-    pub extern "C" fn more_than_6_args(
-        a: i32,
-        b: i32,
-        c: i32,
-        d: i32,
-        e: i32,
-        f: i32,
-        g: i32,
-        h: i32,
-    ) -> i32 {
-        a + b + c + d + e + f + g + h
+impl Func {
+    pub fn ret_as_i8(&self) -> i8 {
+        self.ret_low as i8
     }
 
-    // test push with miri
-    #[test]
-    fn push() {
-        let mut func = Func::from_raw(0 as *const fn());
-        func.push(0u8);
-        func.push(0i8);
-        func.push(0u16);
-        func.push(0i16);
-        func.push(0u32);
-        func.push(0i32);
-        func.push(0isize);
-        func.push(0usize);
-        func.push(0i64);
-        func.push(0u64);
-        func.push(0u128);
-        func.push(0i128);
-        func.push(0.0f32);
-        func.push(0.0f64);
-        func.push(b"".as_ptr());
+    pub fn ret_as_u8(&self) -> u8 {
+        self.ret_low as u8
     }
 
-    #[test]
-    fn cdecl_more_than_6_args() {
-        let mut func = Func::from_raw(more_than_6_args as *const fn());
-        for i in 1..=8 {
-            func.push(i);
-        }
-        unsafe {
-            func.cdecl();
-            assert_eq!(func.ret_usize(), (1..=8).sum());
-        }
+    pub fn ret_as_i16(&self) -> i16 {
+        self.ret_low as i16
     }
 
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn cdecl_sprintf() {
-        let mut buf = vec![0i8; 100];
-        let mut func = if cfg!(target_arch = "x86") {
-            Func::new("/usr/lib32/libc.so.6", b"sprintf\0").unwrap()
+    pub fn ret_as_u16(&self) -> u16 {
+        self.ret_low as u16
+    }
+
+    pub fn ret_as_i32(&self) -> i32 {
+        self.ret_low as i32
+    }
+
+    pub fn ret_as_u32(&self) -> u32 {
+        self.ret_low as u32
+    }
+
+    pub fn ret_as_i64(&self) -> i64 {
+        self.ret_as_u64() as i64
+    }
+
+    pub fn ret_as_u64(&self) -> u64 {
+        if cfg!(target_arch = "x86") {
+            (self.ret_high as u64) << 32 | self.ret_low as u64
         } else {
-            Func::new("/usr/lib/libc.so.6", b"sprintf\0").unwrap()
-        };
-        func.push(buf.as_mut_ptr());
-        func.push(b"%d %d %d %d %d %d\0".as_ptr());
-        func.push(3);
-        func.push(4);
-        func.push(5);
-        func.push(6);
-        func.push(7);
-        func.push(8);
-        unsafe {
-            func.cdecl();
-            assert_eq!(
-                CStr::from_ptr(buf.as_ptr()).to_str().unwrap(),
-                "3 4 5 6 7 8"
-            );
+            self.ret_low as u64
         }
     }
 
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn cdecl_return_int() {
-        let mut func = if cfg!(target_arch = "x86") {
-            Func::new("/usr/lib32/libc.so.6", b"atoi\0").unwrap()
-        } else {
-            Func::new("/usr/lib/libc.so.6", b"atoi\0").unwrap()
-        };
-        func.push(b"2233\0".as_ptr());
-        unsafe {
-            func.cdecl();
-        }
-        assert_eq!(func.ret_usize(), 2233);
+    pub fn ret_as_isize(&self) -> isize {
+        self.ret_low as isize
     }
 
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn cdecl_return_long_long() {
-        let mut func = if cfg!(target_arch = "x86") {
-            Func::new("/usr/lib32/libc.so.6", b"atoll\0").unwrap()
-        } else {
-            Func::new("/usr/lib/libc.so.6", b"atoll\0").unwrap()
-        };
-        func.push(b"2147483649\0".as_ptr());
-        unsafe {
-            func.cdecl();
-        }
-        assert_eq!(func.ret_usize(), 2147483649);
+    pub fn ret_as_usize(&self) -> usize {
+        self.ret_low as usize
     }
 
-    #[test]
-    #[cfg(target_os = "linux")]
-    fn cdecl_return_double() {
-        let mut func = if cfg!(target_arch = "x86") {
-            Func::new("/usr/lib32/libc.so.6", b"atof\0").unwrap()
+    pub fn ret_as_i128(&self) -> i128 {
+        self.ret_as_u128() as i128
+    }
+
+    pub fn ret_as_u128(&self) -> u128 {
+        if cfg!(target_arch = "x86_64") {
+            (self.ret_high as u128) << 64 | self.ret_low as u128
         } else {
-            Func::new("/usr/lib/libc.so.6", b"atof\0").unwrap()
-        };
-        func.push(b"123.456\0".as_ptr());
-        unsafe {
-            func.cdecl();
+            unimplemented!()
         }
-        assert!(func.ret_f64() - 123.456 <= std::f64::EPSILON);
+    }
+
+    pub fn ret_as_f32(&self) -> f32 {
+        self.ret_float as f32
+    }
+
+    pub fn ret_as_f64(&self) -> f64 {
+        self.ret_float
     }
 }
