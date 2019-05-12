@@ -161,30 +161,6 @@ impl Func {
                 }
             }
             self.args.extend_from_slice(&arg.into_arg());
-            /*
-            // 浮点数理应使用浮点专用的指令传参, 然而咱是手动压栈的, 压栈的时候已经丢失了类型信息, 只能用 push
-            // 所以需要手动转成适合压栈的格式, 对于 f64 来说, 规则和 u64 一样, 但是 f32 需要先转成 f64 再压栈(即对齐
-            if arg.type_id() == TypeId::of::<f32>() {
-                self.push(f64::from(mem::transmute_copy::<T, f32>(&arg)));
-            } else if mem::size_of::<T>() <= mem::size_of::<usize>() {
-                // 当参数大小小于等于机器字长时, 直接 transmute_copy + as 转换为 usize
-                // 转换得到的数字需要与转换前的数字拥有相等的二进制表示(对齐后)
-                let arg = match mem::size_of::<T>() {
-                    1 => mem::transmute_copy::<T, u8>(&arg) as usize,
-                    2 => mem::transmute_copy::<T, u16>(&arg) as usize,
-                    4 => mem::transmute_copy::<T, u32>(&arg) as usize,
-                    8 => mem::transmute_copy::<T, u64>(&arg) as usize,
-                    _ => unreachable!("We don't support 128bit machine now"),
-                };
-                self.args.push(arg);
-            } else {
-                // 当参数大小大于机器字长, 如 32 位下的 f64 时
-                // 分割为一个 &[usize] 再压入
-                let len = mem::size_of::<T>() / mem::size_of::<usize>();
-                let slice = std::slice::from_raw_parts(&arg as *const _ as *const usize, len);
-                self.args.extend_from_slice(slice);
-            }
-            */
         }
     }
 
@@ -216,9 +192,8 @@ impl Func {
 
                 call $func      // 调用函数
 
-                mov  ebx, $len
-                shl  ebx, 2     // 参数个数x4, 得到恢复堆栈指针所需的大小
-                add  esp, ebx   // 恢复堆栈指针
+                mov  ebx, $len  // 恢复堆栈指针
+                lea  esp, [esp + ebx * 4]
             "}
 
             self.ret_low   = low;
@@ -243,12 +218,14 @@ impl Func {
 
             clobber("memory");
             clobber("rsp");
-            clobber("rdi");
+
+            clobber("rdi"); // 传参寄存器
             clobber("rsi");
             clobber("rdx");
             clobber("rcx");
             clobber("r8");
             clobber("r9");
+
             clobber("r10"); // 调用者保护
             clobber("r11"); // 调用者保护
             clobber("r12");
@@ -296,16 +273,18 @@ impl Func {
                 movsd xmm0, qword ptr [$fargs]
             .LARG0${:uid}:
 
-
-                xor    r12, r12    // r12 记录压栈参数数目
-            .LPUSH${:uid}:         // 将参数压栈, 直到参数个数小于等于 6
+                // r12 = $len <= 6 ? 0 : ($len - 6)
+                lea    r12, [$len - 6]
                 cmp    $len, 6
+                mov    rdi, 0
+                cmovbe r12, rdi
                 jbe    .LPUSH_F6${:uid}
+            .LPUSH${:uid}:       // 将参数压栈, 直到参数个数小于等于 6
                 push   qword ptr [$args]
                 sub    $args, 8
-                inc    r12
-                dec    $len
-                jmp    .LPUSH${:uid}
+                sub    $len, 1
+                cmp    $len, 6   // if $len != 6
+                jne    .LPUSH${:uid}
 
             .LPUSH_F6${:uid}:    // 将前六个参数送入寄存器
                 lea    rdi, [rip + .LABELS${:uid}]
@@ -343,13 +322,8 @@ impl Func {
             .LCALL${:uid}:
                 call $func
 
-                // 如果 r12 不为 0, 则需要清栈
-                cmp  r12, 0
-                jz   .LEND${:uid}
-                shl  r12, 3
-                add  rsp, r12
-
-            .LEND${:uid}:
+                // 清理堆栈
+                lea  rsp, [rsp + r12 * 8]
             "}
 
             self.ret_low   = low;

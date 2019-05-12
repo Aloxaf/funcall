@@ -11,44 +11,25 @@ pub extern "C" fn more_than_6_args(
     a + b + c + d + e + f + g + h
 }
 
-pub extern "C" fn return_i8(n: i8) -> i8 {
-    n
+macro_rules! define_functions {
+    ($cv:tt, $func:ident, $ty:ty) => {
+        pub extern $cv fn $func(n: $ty) -> $ty {
+            n
+        }
+    };
 }
 
-pub extern "C" fn return_u8(n: u8) -> u8 {
-    n
-}
-
-pub extern "C" fn return_isize(n: isize) -> isize {
-    n
-}
-
-pub extern "C" fn return_usize(n: usize) -> usize {
-    n
-}
-
-pub extern "C" fn return_i64(n: i64) -> i64 {
-    n
-}
-
-pub extern "C" fn return_u64(n: u64) -> u64 {
-    n
-}
+define_functions!("C", return_i8, i8);
+define_functions!("C", return_u8, u8);
+define_functions!("C", return_isize, isize);
+define_functions!("C", return_usize, usize);
+define_functions!("C", return_i64, i64);
+define_functions!("C", return_u64, u64);
+define_functions!("C", return_f32, f32);
+define_functions!("C", return_f64, f64);
 
 #[cfg(target_arch = "x86_64")]
-pub extern "C" fn return_i128(n: i128) -> i128 {
-    n
-}
+define_functions!("C", return_i128, i128);
 
 #[cfg(target_arch = "x86_64")]
-pub extern "C" fn return_u128(n: u128) -> u128 {
-    n
-}
-
-pub extern "C" fn return_f32(n: f32) -> f32 {
-    n
-}
-
-pub extern "C" fn return_f64(n: f64) -> f64 {
-    n
-}
+define_functions!("C", return_u128, u128);
