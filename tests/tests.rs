@@ -56,7 +56,6 @@ mod cdecl {
     #[test]
     #[cfg(target_os = "linux")]
     fn sprintf() {
-        // FIXME: debug 模式下最后一个浮点数偶尔会变成 0.0
         for _ in 0..100 {
             let mut buf = vec![0i8; 100];
             let mut func = if cfg!(target_arch = "x86") {
@@ -65,19 +64,20 @@ mod cdecl {
                 Func::new("/usr/lib/libc.so.6", b"sprintf\0").unwrap()
             };
             func.push(buf.as_mut_ptr());
-            func.push(b"%d %d %d %d %d %d %.4f\0".as_ptr());
+            func.push(b"%d %d %d %d %d %d %d %.4f\0".as_ptr());
             func.push(3i32);
             func.push(4i32);
             func.push(5i32);
             func.push(6i32);
             func.push(7i32);
             func.push(8i32);
+            func.push(9i32);
             func.push(1234.5678f64);
             unsafe {
                 func.cdecl();
                 assert_eq!(
                     CStr::from_ptr(buf.as_ptr()).to_str().unwrap(),
-                    "3 4 5 6 7 8 1234.5678"
+                    "3 4 5 6 7 8 9 1234.5678"
                 );
             }
         }

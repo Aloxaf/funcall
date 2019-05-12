@@ -279,6 +279,11 @@ impl Func {
                 mov    rdi, 0
                 cmovbe r12, rdi
                 jbe    .LPUSH_F6${:uid}
+
+                // 栈对齐, 暂时不知道原因不过不对齐会出错
+                test   r12, 1   // if r12 % 2 == 0
+                je     .LPUSH${:uid}
+                sub    rsp, 8
             .LPUSH${:uid}:       // 将参数压栈, 直到参数个数小于等于 6
                 push   qword ptr [$args]
                 sub    $args, 8
@@ -320,10 +325,15 @@ impl Func {
                 mov  rdi, qword ptr [$args]
 
             .LCALL${:uid}:
+                mov  rax, $flen
                 call $func
 
                 // 清理堆栈
                 lea  rsp, [rsp + r12 * 8]
+                test r12, 1
+                je   .LNOALIGN2${:uid}
+                add  rsp, 8
+            .LNOALIGN2${:uid}:
             "}
 
             self.ret_low   = low;
